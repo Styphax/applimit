@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AppLimit</string>
+    <string name="accessibility_service_label">AppLimit Überwachung</string>
+    <string name="accessibility_service_description">Erkennt App-Wechsel im Vordergrund und erfasst lokale Nutzungszeiten für selbst gesetzte Tageslimits.</string>
+</resources>

@@ -1,0 +1,27 @@
+# Android Studio and Gradle
+.gradle/
+.gradle-user-home/
+.android-user-home/
+.idea/
+*.iml
+build/
+app/build/
+local.properties
+
+# Portable, project-local Android toolchain
+.toolchain/
+
+# Local signing material
+*.jks
+*.keystore
+
+# Working documents and device evidence (never publish)
+evidence/
+STATUS.md
+.agents/
+.codex/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
