@@ -1,117 +1,117 @@
 # AppLimit
 
-Screen-time enforcement for Android that actually means it. AppLimit puts per-app daily
-limits on **how often** you open an app and **how long** you use it, with different
-plans per weekday, shared budgets across app groups, allowed time windows, and a
-deliberate-friction unlock flow instead of a toothless "remind me later".
+AppLimit sets daily limits on how often you open Android apps and how long you use
+them. You can set different plans for each weekday, share budgets across app groups
+and restrict use to specific time windows. When you reach a limit, extending it
+requires a short wait and an explicit choice.
 
-Built end-to-end in roughly one day by an **orchestrated two-agent pipeline** — a
-planning/reviewing orchestrator agent and an implementing coding agent — against a
-written specification, with human acceptance gates on a real device after every
-milestone. If you are here to look at the app, start below. If you are here to see
-what disciplined agentic software delivery looks like, jump to
-[How this was built](#how-this-was-built) and the [case studies](#case-studies).
+The app was built in roughly one day by two coordinated agents: one planned and
+reviewed the work, while the other implemented it. They worked from a written
+specification, with human acceptance checks on a real device after every milestone.
+[How this was built](#how-this-was-built) describes the process, and the
+[case studies](#case-studies) cover three device-side investigations.
 
 ## Features
 
-- **Opening limits** (e.g. Gmail: 10 openings/day) and **minute limits**
-  (e.g. Twitter/X: 10 minutes/day), per app or per app group with a shared budget
-- **Weekday plans**: the week is partitioned into plans (e.g. Mon–Fri vs. weekend),
-  each with its own limits and time windows; validated so every day belongs to
-  exactly one plan
-- **Allowed time windows** per plan (e.g. social media only 09:00–21:00) — outside
-  the window a hard block with the next release time, no override
-- **Warnings before the wall**: notification at 80 % of the minute budget and at the
-  second-to-last opening; a small countdown overlay during the final minute
-- **Friction unlock**: when a limit is hit, a full-screen block appears and the app is
-  sent home before it becomes visible. After a 5-second countdown you can consciously
-  grant yourself an extension — small (+1 minute / +1 opening) or large
-  (+5 minutes / +3 openings). Unlimited passes, but every single one is logged and
-  visible in the dashboard: the friction count *is* the feedback signal
-- **Opening semantics with debounce**: re-entering an app within 60 seconds continues
-  the same logical opening, so quick app switches don't eat your budget
-- **Statistics dashboard**: day view against limits (granted extensions shown as a
-  visible surcharge), 7-day trends per app/group, full friction history
-- **Robustness**: foreground anchor service, boot recovery, and a watchdog that
-  actively probes the detection pipeline (see case study 3) — built to survive
-  One UI's aggressive process management
-- **66 unit tests** around a pure-Kotlin usage engine with an injectable clock, plus
-  an automated on-device regression harness ([verify-device.ps1](verify-device.ps1))
+- Set daily opening and minute limits per app or for an app group with a shared
+  budget, such as 10 Gmail openings or 10 minutes of Twitter/X per day.
+- Divide the week into plans, such as Monday to Friday and weekends, each with its
+  own limits and time windows. Validation checks that every day belongs to exactly
+  one plan.
+- Restrict use to allowed time windows, such as social media from 09:00 to 21:00.
+  Outside the window, a block shows the next release time and cannot be overridden.
+- Receive warnings at 80 % of the minute budget and at the second-to-last opening.
+  A small countdown overlay appears during the final minute.
+- When you hit a limit, a full-screen block appears and the target app is sent home
+  before it becomes visible. After a 5-second countdown, you can grant yourself a
+  small extension (+1 minute / +1 opening) or a large one (+5 minutes / +3 openings).
+  Extensions are unlimited. Each is logged in the dashboard so you can see how
+  often you chose to extend a limit.
+- Re-entering an app within 60 seconds continues the same logical opening. Quick
+  app switches do not consume another opening.
+- The dashboard shows daily usage against limits, with granted extensions shown
+  as a visible surcharge, 7-day trends per app or group and the full friction history.
+- A foreground anchor service, boot recovery and a watchdog that actively probes
+  the detection pipeline help keep the app running under One UI's aggressive
+  process management. Case study 3 covers the watchdog.
+- 66 unit tests cover the pure-Kotlin usage engine with an injectable clock. An
+  automated on-device regression harness checks device behavior
+  ([verify-device.ps1](verify-device.ps1)).
 
 ## Architecture
 
-- **Detection**: an `AccessibilityService` consumes `TYPE_WINDOW_STATE_CHANGED` events,
-  combined with screen/unlock broadcasts. Foreground state is *reconciled* against the
-  real window list (`getWindows()` / `rootInActiveWindow`) instead of trusting event
-  delivery — see case study 2 for why
-- **Engine**: `UsageEngine` is pure Kotlin/JVM with an injected `java.time.Clock` —
-  every counting rule (debounce boundaries, screen-off finalization, keyguard
-  handling, day rollover incl. DST) is unit-tested with simulated time
-- **Enforcement**: evaluation per serialized command queue; blocks are rendered as
-  `SYSTEM_ALERT_WINDOW` overlays plus an immediate `GLOBAL_ACTION_HOME`, so the target
-  app never flashes
-- **Persistence**: Room (schema v5, strictly additive migrations), counters flushed
-  every 7 seconds and on every session end; sessions and friction events are never
-  deleted, which is what makes the dashboard's history trustworthy
-- **UI**: Jetpack Compose, Material 3
+- An `AccessibilityService` combines `TYPE_WINDOW_STATE_CHANGED` events with
+  screen/unlock broadcasts to detect foreground activity. It reconciles foreground
+  state against the real window list (`getWindows()` / `rootInActiveWindow`) because
+  event delivery alone is unreliable. Case study 2 explains why.
+- `UsageEngine` is pure Kotlin/JVM with an injected `java.time.Clock`. Every counting
+  rule is unit-tested with simulated time, including debounce boundaries,
+  screen-off finalization, keyguard handling and day rollover with DST.
+- A serialized command queue handles enforcement evaluation. Blocks use
+  `SYSTEM_ALERT_WINDOW` overlays and an immediate `GLOBAL_ACTION_HOME` so the target
+  app does not flash on screen.
+- Room stores the data (schema v5, strictly additive migrations). Counters are
+  flushed every 7 seconds and at every session end. Sessions and friction events
+  are never deleted, preserving the dashboard's history.
+- The UI uses Jetpack Compose and Material 3.
 
 ## Requirements and build
 
-- Device: Android 16 (API 36). Developed and verified on a Samsung Galaxy S25 Ultra
-  (One UI 8.5); other launchers/OEMs may surface different accessibility event
-  patterns (see case study 2)
-- Build: JDK 17 and an Android SDK with platform 36 (`gradlew.bat assembleDebug` /
-  `./gradlew assembleDebug`). The wrapper honors `JAVA_HOME`
-- Install: sideload via `adb install -r`. Note: Android's "restricted settings" gate
-  for accessibility services does **not** apply to adb installs; the in-app onboarding
-  guides through all six required permissions and Samsung-specific battery settings
-- The included [verify-device.ps1](verify-device.ps1) drives a connected device
-  through the counting scenarios via adb and reports PASS/FAIL per scenario
+- Android 16 (API 36). Developed and verified on a Samsung Galaxy S25 Ultra
+  (One UI 8.5). Other launchers and OEMs may produce different accessibility event
+  patterns (see case study 2).
+- JDK 17 and an Android SDK with platform 36 (`gradlew.bat assembleDebug` /
+  `./gradlew assembleDebug`). The wrapper honors `JAVA_HOME`.
+- Sideload via `adb install -r`. Android's "restricted settings" gate for
+  accessibility services does not apply to adb installs. In-app onboarding guides
+  you through all six required permissions and Samsung-specific battery settings.
+- [verify-device.ps1](verify-device.ps1) runs counting scenarios on a connected
+  device via adb and reports PASS/FAIL for each scenario.
 
 ## How this was built
 
-The interesting part of this repository is not the app — it is the delivery process.
+Before coding began, a complete behavioral specification was written and agreed.
+It covered the goal, precise counting semantics, architecture, data model and eight
+milestones with acceptance criteria, along with a decision log.
+[docs/SPEC.md](docs/SPEC.md) is in German, the project's working language.
 
-- **Spec first.** A complete behavioral specification (goal, precise counting
-  semantics, architecture, data model, eight milestones with acceptance criteria,
-  decision log) was written and agreed *before* the first line of code. It lives in
-  [docs/SPEC.md](docs/SPEC.md) (German — the project's working language)
-- **Two agents, clear roles.** An orchestrator agent owned the spec, milestone
-  handoffs, evidence collection and device automation; a coding agent (GPT-5.6 class,
-  maximum reasoning effort) implemented each milestone in fresh, self-contained runs.
-  The human owned decisions and on-device acceptance
-- **Milestone gates.** Every milestone ended with unit tests, a build, an install on
-  the real device, and a human acceptance walk-through against written criteria.
-  Specification changes discovered during acceptance (e.g. dropping the
-  commitment-delay feature after trying it) were written back into the spec before
-  the next handoff
-- **Evidence before fixes.** Every device-side failure was investigated by pulling
-  the app's Room database off the device and reconstructing the real event timeline
-  *before* touching code. Three of those investigations were interesting enough to
-  write up — see below
-- **Device-in-the-loop regression.** A PowerShell/adb harness replays the counting
-  scenarios on the physical device after behavioral changes. It caught a latent bug
-  that every unit test missed (case study 2)
+An orchestrator agent managed the specification, milestone handoffs, evidence
+collection and device automation. A coding agent (GPT-5.6 class, maximum reasoning
+effort) implemented each milestone in a fresh, self-contained run. The human made
+decisions and handled on-device acceptance.
+
+Every milestone ended with unit tests, a build, an install on the real device and
+a human acceptance walk-through against written criteria. When acceptance testing
+led to a specification change, it was recorded before the next handoff. The
+commitment-delay feature, for example, was dropped after trying it.
+
+For every device-side failure, the app's Room database was pulled from the device
+to reconstruct the event timeline before changing code. The three case studies
+below document three of those investigations.
+
+After behavioral changes, a PowerShell/adb harness replayed the counting scenarios
+on the physical device. It caught a latent bug that every unit test missed
+(case study 2).
 
 ## Case studies
 
-1. **[The keyguard that never said "present"](docs/case-study-1-keyguard.md)** — why
-   screen-off counting failed, how the fix regressed, and why the final state machine
-   trusts no event ordering
-2. **[The launcher event that never came](docs/case-study-2-foreground-events.md)** —
-   how fixing one bug unmasked another that an earlier bug had been silently
-   compensating for
-3. **[Watchdog: probe, don't observe](docs/case-study-3-watchdog.md)** — why passive
-   liveness checks produce false alarms on a dozing phone, and the active-probe fix
+1. [The keyguard that never said "present"](docs/case-study-1-keyguard.md): why
+   screen-off counting failed, how the fix regressed and why the final state machine
+   does not rely on event ordering.
+2. [The launcher event that never came](docs/case-study-2-foreground-events.md):
+   how fixing one bug exposed another that the earlier bug had been masking.
+3. [Watchdog health checks](docs/case-study-3-watchdog.md): why passive
+   liveness checks produce false alarms on a dozing phone and how active probes
+   address them.
 
-## Honest limitations
+## Limitations
 
-- Personal single-device project: tested on exactly one phone model, sideload only,
-  no Play Store policy compliance intended (accessibility-based blockers are
-  restricted there)
-- No tamper protection: you can still uninstall the app or disable the service —
-  by design, this is a friction tool, not a prison
-- UI language is German
+- This is a personal project, tested on one phone model and installed by sideloading.
+  Play Store policy compliance is not intended. Accessibility-based blockers are
+  restricted there.
+- There is no tamper protection. You can uninstall the app or disable the service.
+  It is designed to add friction to your choices.
+- The UI is in German.
 
 ## License
 

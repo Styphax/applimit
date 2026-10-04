@@ -1,36 +1,39 @@
-# Case study 3: Watchdog — probe, don't observe
+# Case study 3: Watchdog health checks
 
-*Milestone 8 acceptance. Short, but the lesson generalizes far beyond Android.*
+During milestone 8 acceptance, the watchdog repeatedly warned about a service that
+was still running.
 
 ## The symptom
 
-The robustness milestone added a WorkManager watchdog that warns when the detection
-service dies. During acceptance it cried wolf: recurring "re-enable the accessibility
-service" notifications while the service was demonstrably alive and enabled.
+The robustness milestone added a WorkManager watchdog to warn when the detection
+service dies. During acceptance, it kept sending "re-enable the accessibility service"
+notifications even though the service was confirmed alive and enabled.
 
 ## Root cause
 
-The health check observed *passive* signals: a heartbeat timestamp written by a
-60-second coroutine timer inside the service process, plus "at least one command
-processed since connect". Both starve legitimately on an idle, dozing phone — the
-process is paused, no events arrive, nothing is processed. To a passive observer,
-a healthy-but-idle service and a dead service look identical.
+The health check used two passive signals: a heartbeat timestamp written by a
+60-second coroutine timer inside the service process, and whether at least one
+command had been processed since connection.
+
+Both signals can stop updating on an idle, dozing phone. The process pauses, no
+events arrive and no commands are processed. These signals could not distinguish
+an idle service from a dead one.
 
 ## The fix
 
-The watchdog now **actively probes**: it enqueues a lightweight `HealthProbe` command
-into the same serialized queue that processes detection events and waits up to two
-seconds for the confirmation, which is only issued after the command was actually
-processed and the heartbeat refreshed. A connected idle service answers instantly and
-is healthy; an unbound service, a missing queue consumer, or a wedged processor still
-raises the alarm. A healthy check auto-clears any existing warning.
+The watchdog now sends a lightweight `HealthProbe` command through the same serialized
+queue that processes detection events. It waits up to two seconds for confirmation.
+The service confirms only after processing the command and refreshing the heartbeat.
 
-Regression tests cover both directions: idle-under-doze must stay silent; a genuinely
-disconnected service must still warn.
+A connected idle service responds immediately and passes the check. An unbound
+service, a missing queue consumer or a stuck processor still triggers a warning.
+A successful check automatically clears any existing warning.
+
+Regression tests check both cases: an idle service under doze must not trigger a
+warning, and a disconnected service must still trigger one.
 
 ## Lesson
 
-Liveness detection based on "when did we last see activity?" conflates *idle* with
-*dead*. If you can interact with the system you are watching, send a probe through the
-same path that real work takes — the answer distinguishes the two states in a way no
-passive timestamp can.
+The time of the last activity cannot distinguish an idle service from a dead one.
+When the monitored system can respond to a request, sending a probe through its
+normal work path checks whether it can still process work.

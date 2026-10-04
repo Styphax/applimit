@@ -1,62 +1,64 @@
 # Case study 1: The keyguard that never said "present"
 
-*Milestone 2 acceptance, two consecutive fixes. All timings below are real, taken from
-the app's own raw-event log pulled off the device before any code was changed.*
+During milestone 2 acceptance, a screen-off counting bug required two consecutive
+fixes. The timings below come from the app's raw-event log, pulled from the device
+before any code was changed.
 
 ## The symptom
 
-Manual acceptance scenario: use an app for 10 s → screen off for 61+ s → unlock →
-use it 10 s more. Expected: **+2 openings, ~20 s**. Measured: **+1 opening, ~22 s** —
-the time was counted, the second opening was not.
+The manual acceptance scenario was to use an app for 10 s, turn the screen off for
+61+ s, unlock it and use the app for another 10 s. The expected result was +2 openings
+and ~20 s. The measured result was +1 opening and ~22 s. Usage time was counted, but
+the second opening was missing.
 
-## Evidence pass 1
+## First investigation
 
-The pulled Room database showed the real sequence:
+The Room database showed this sequence:
 
 | Time | Event |
 |---|---|
 | t+0.000 s | `SCREEN_OFF`, target app in foreground |
-| t+59.814 s | `SCREEN_ON` — **just under the 60 s boundary**, keyguard still up |
+| t+59.814 s | `SCREEN_ON`, just under the 60 s boundary, keyguard still up |
 | t+59.9…60.3 s | wallet / biometric system windows |
 | t+62.366 s | target app re-reported after unlock |
 
-Root cause #1: the service treated `SCREEN_ON` as "screen usable" immediately, although
-the keyguard was still covering everything. It therefore resumed the target app at
-59.8 s — inside the debounce window — so no new opening was counted, and usage time
-even accrued *before* the unlock.
+The service treated `SCREEN_ON` as meaning the screen was usable, even though the
+keyguard still covered it. Tracking resumed at 59.8 s, inside the debounce window,
+so no new opening was counted. Usage time also accrued before the unlock.
 
-Fix #1: gate reactivation on the keyguard — `SCREEN_ON` while locked keeps the engine
-paused; `ACTION_USER_PRESENT` (unlock) resumes it.
+The first fix kept the engine paused when `SCREEN_ON` arrived while the device was
+locked. It waited for `ACTION_USER_PRESENT` to resume tracking after unlock.
 
 ## The regression
 
-The retest got *worse*: +1 opening and only +10.5 s — everything after the unlock was
-now lost entirely.
+The retest counted +1 opening and only +10.5 s. All usage after unlock was now missing.
 
-Evidence pass 2 delivered the punchline: across the entire recorded history of the
-device, **not a single `ACTION_USER_PRESENT` broadcast had ever reached the service.**
-On this device (Samsung, fingerprint unlock, always-on display) the broadcast simply
-doesn't arrive. Fix #1 had chained recovery to a signal that never fires. The log also
-showed an AOD "double blink" — the display turns on, off again, and on again during
-wake-up — which would have confused any sequence-based logic anyway.
+Across the device's entire recorded history, no `ACTION_USER_PRESENT` broadcast had
+reached the service. On this Samsung device with fingerprint unlock and an always-on
+display, the broadcast did not arrive. The first fix had made recovery depend on it.
 
-## The durable fix
+The log also showed an AOD "double blink": the display turned on, off and on again
+during wake-up. That sequence would also have disrupted logic that assumed a fixed
+event order.
 
-Stop assuming any event ordering. Every relevant callback (screen signals, window
-events, including *ignored* system windows) now captures a fresh snapshot of
-`PowerManager.isInteractive` and `KeyguardManager.isKeyguardLocked`; the screen counts
-as usable exactly when `interactive && !keyguardLocked`. No broadcast is a prerequisite
-for any other — even an ignored biometric overlay event can serve as the fallback
-trigger that re-activates tracking after an unlock.
+## The final fix
 
-A regression test replays the exact recorded device timings (59.814 s / 62.366 s);
-a second test covers the short screen-off case (no new opening).
+Every relevant callback now reads `PowerManager.isInteractive` and
+`KeyguardManager.isKeyguardLocked` to capture the current state. This includes screen
+signals and window events, even those from ignored system windows. The screen is
+usable exactly when `interactive && !keyguardLocked`.
+
+No broadcast has to arrive before another. Even an ignored biometric overlay event
+can trigger the state check that resumes tracking after unlock.
+
+One regression test replays the recorded device timings (59.814 s / 62.366 s).
+A second covers a short screen-off interval, which must not count as a new opening.
 
 ## Lessons
 
-- Pull the real event stream before theorizing: both root causes were visible in the
-  data and neither matched the first hypothesis
-- OEM reality beats API contracts: a documented broadcast that "always" fires on
-  unlock can simply be absent on a given device path
-- State machines that survive hostile event streams derive state from queryable truth
-  (`isInteractive`, `isKeyguardLocked`) instead of event choreography
+Both causes were visible in the event log, and neither matched the first hypothesis.
+Reading the device's event stream before proposing a fix exposed what was happening.
+
+A documented unlock broadcast can be absent on a particular device path. Checking
+`isInteractive` and `isKeyguardLocked` lets the state machine determine the current
+state without depending on broadcasts arriving in a particular order.
